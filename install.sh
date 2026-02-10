@@ -5,7 +5,7 @@ set -e
 # Usage: curl -fsSL <RAW_URL>/install.sh | bash
 # Advanced: ENABLE_NGINX=1 HTTP_PORT=8080 bash install.sh
 
-REPO_URL="https://github.com/yourusername/YemekBildirim.git"
+REPO_URL="https://github.com/alemgir0/yemekbildirim.git"
 INSTALL_DIR="/opt/yemekbildirim"
 COMPOSE_CMD=""
 
@@ -75,22 +75,34 @@ install_docker() {
 
 # 2. Clone or update repository
 setup_repository() {
-    echo -n "Setting up repository... "
-    
-    if [ -d "$INSTALL_DIR" ]; then
-        echo -e "${YELLOW}exists${NC}"
-        echo "Updating existing installation..."
-        cd "$INSTALL_DIR"
-        git pull --quiet
-        echo -e "${GREEN}✓ Repository updated${NC}"
-    else
-        echo -e "${YELLOW}cloning${NC}"
-        sudo mkdir -p "$(dirname "$INSTALL_DIR")"
-        sudo git clone --quiet "$REPO_URL" "$INSTALL_DIR"
-        sudo chown -R $USER:$USER "$INSTALL_DIR"
-        cd "$INSTALL_DIR"
-        echo -e "${GREEN}✓ Repository cloned${NC}"
-    fi
+  echo -n "Setting up repository... "
+  if [ -d "$INSTALL_DIR/.git" ]; then
+    echo -e "${YELLOW}exists${NC}"
+    echo "Updating existing installation..."
+
+    cd "$INSTALL_DIR"
+    git remote set-url origin "$REPO_URL" >/dev/null 2>&1 || true
+    git fetch origin --prune
+
+    git checkout -B main origin/main
+    git reset --hard origin/main
+
+    # Runtime dosyalarını KORU
+    git clean -fd \
+      -e server/.env \
+      -e server/data \
+      -e server/data/*
+
+    echo -e "${GREEN}✓ Repository updated${NC}"
+  else
+    echo -e "${YELLOW}cloning${NC}"
+    sudo mkdir -p "$(dirname "$INSTALL_DIR")"
+    sudo git clone --quiet "$REPO_URL" "$INSTALL_DIR"
+    sudo chown -R $USER:$USER "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
+    git checkout -B main origin/main
+    echo -e "${GREEN}✓ Repository cloned${NC}"
+  fi
 }
 
 # 3. Generate .env with random secrets
