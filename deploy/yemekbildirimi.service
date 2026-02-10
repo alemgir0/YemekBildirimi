@@ -1,0 +1,15 @@
+[Unit]
+Description=YemekBildirimi Server
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/YemekBildirim/server
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose down
+User=root
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,37 @@
+# Environment files (secrets)
+server/.env
+.env
+
+# Nginx auth files (secrets)
+nginx/conf/.htpasswd
+.htpasswd
+
+# Build artifacts
+*.zip
+client.zip
+dist/
+build/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+*.egg-info/
+venv/
+env/
+
+# Logs and data
+*.log
+server/data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

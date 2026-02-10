@@ -1,0 +1,16 @@
+services:
+  yemek-server:
+    build: .
+    container_name: yemek-server
+    restart: always
+    environment:
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8787:8787"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/health').read()\""]
+      interval: 30s
+      timeout: 3s
+      retries: 3

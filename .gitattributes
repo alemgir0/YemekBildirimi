@@ -1,0 +1,21 @@
+* text=auto
+
+# Linux
+*.sh   text eol=lf
+*.py   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.conf text eol=lf
+*.md   text eol=lf
+
+# Windows
+*.ps1  text eol=crlf
+*.psm1 text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.vbs  text eol=crlf
+
+# Binaries
+*.jpg binary
+*.png binary
+*.ico binary
