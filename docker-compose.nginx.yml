@@ -1,0 +1,25 @@
+services:
+  # Override yemek-server to join shared network
+  yemek-server:
+    networks:
+      - yemek-network
+
+  # Nginx reverse proxy service
+  yemek-nginx:
+    image: nginx:alpine
+    container_name: yemek-nginx
+    restart: always
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+      - "${HTTPS_PORT:-8443}:443"
+    volumes:
+      # Mount entire conf directory to avoid missing file errors
+      - ./nginx/conf:/etc/nginx/conf.d:ro
+    depends_on:
+      - yemek-server
+    networks:
+      - yemek-network
+
+networks:
+  yemek-network:
+    driver: bridge

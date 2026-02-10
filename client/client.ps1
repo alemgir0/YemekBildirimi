@@ -27,7 +27,7 @@ $LogFile = Join-Path $LogDir "client.log"
 $ScriptDir = $PSScriptRoot
 if (-not $ScriptDir) { $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
 
-$LogoPath = Join-Path $ScriptDir "assets\astechlogo.jpg"
+$LogoPath = Join-Path $ScriptDir "assets\logo.png"
 
 function Write-Log {
     param([string]$Message, [string]$Level = "INFO")
