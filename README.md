@@ -1,214 +1,309 @@
-# YemekBildirim
+# 🍽️ YemekBildirim
 
-Enterprise Notification System - Cafeteria announcement notifications for Windows clients.
+![Docker](https://img.shields.io/badge/Docker-Ready-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-Backend-green)
+![Windows Client](https://img.shields.io/badge/Windows-Client-blue)
+![License](https://img.shields.io/badge/License-MIT-yellow)
 
-=
-OVERVIEW
-=
+Enterprise Cafeteria Notification System for Windows environments.
 
-YemekBildirim consists of:
+---
 
-- Server: FastAPI backend (Docker)
-- Nginx: Reverse proxy (optional)
-- Client: PowerShell-based Windows client (Scheduled Task)
+# 📌 Overview
 
-Data Flow:
-1. Admin sends notification via /panel (Basic Auth protected)
-2. Server stores notification in server/data/
-3. Clients poll /latest endpoint
-4. New notifications trigger Windows Toast popups
+YemekBildirim is a lightweight internal notification system designed for corporate environments.
 
-=
-QUICK SERVER INSTALL (RECOMMENDED)
-=
+It consists of:
 
-Ubuntu/Debian one-liner:
+* **FastAPI Backend (Dockerized)**
+* **Optional Nginx Reverse Proxy**
+* **PowerShell Windows Client (Scheduled Task)**
+* **Persistent JSON-based state storage**
 
+---
+
+# 🏗 Architecture
+
+```
++-------------------+
+|   Admin Browser   |
+|   /panel (Auth)   |
++---------+---------+
+          |
+          v
++-------------------+
+|   FastAPI Server  |
+|   Port 8787       |
+|   Docker          |
++---------+---------+
+          |
+          v
++-------------------+
+|  server/data/     |
+|  JSON storage     |
++-------------------+
+
+Clients Poll:
+
++-------------------+
+| Windows Client    |
+| Poll /latest      |
+| Toast Notification|
++-------------------+
+```
+
+---
+
+# 🚀 QUICK SERVER INSTALL (RECOMMENDED)
+
+Ubuntu / Debian one-liner:
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/alemgir0/yemekbildirim/main/install.sh | bash
+```
 
 What it does:
-- Installs Docker if missing
-- Clones repo to /opt/yemekbildirim
-- Generates random secrets
-- Starts server on port 8787
-- Waits for health check
-- Prints access URLs and credentials
+
+* Installs Docker (if missing)
+* Clones repository to `/opt/yemekbildirim`
+* Generates secure random API key
+* Generates secure panel password
+* Starts container on port 8787
+* Waits for health check
+* Prints credentials once
 
 After install:
 
-API Health:
+```bash
 http://<SERVER_IP>:8787/health
-
-Admin Panel:
 http://<SERVER_IP>:8787/panel
+```
 
-IMPORTANT:
-Installer prints credentials once. Save them immediately.
+⚠️ Save printed credentials immediately.
 
-=
-INSTALLATION MODES
-=
+---
 
-OPTION A – Server Only (Default)
---------------------------------
+# ⚙ Installation Modes
+
+## 1️⃣ Server Only (Default)
 
 Port: 8787
 
-bash install.sh
+```bash
+curl -fsSL https://raw.githubusercontent.com/alemgir0/yemekbildirim/main/install.sh | bash
+```
 
-Access:
-http://SERVER_IP:8787/panel
+---
 
---------------------------------
+## 2️⃣ Docker Nginx (Port 8080)
 
-OPTION B – Docker Nginx (Port 8080)
---------------------------------
-
+```bash
 ENABLE_NGINX=1 HTTP_PORT=8080 bash install.sh
+```
 
 Access:
-http://SERVER_IP:8080/panel
 
---------------------------------
+```
+http://<SERVER_IP>:8080/panel
+```
 
-OPTION C – Host Nginx Reverse Proxy
---------------------------------
+Custom ports:
 
-Use nginx/conf/default.host.conf
+```bash
+ENABLE_NGINX=1 HTTP_PORT=9000 HTTPS_PORT=9443 bash install.sh
+```
 
-Proxy upstream:
-127.0.0.1:8787
+---
 
-=
-CLIENT INSTALLATION (WINDOWS)
-=
+## 3️⃣ Host Nginx Integration
 
-REQUIREMENTS:
-- Windows 10/11
-- PowerShell 5.1+
-- BurntToast module
+If nginx already runs on host:
 
-=
-METHOD A – DOWNLOAD FROM SERVER (RECOMMENDED)
-=
+```bash
+sudo cp /opt/yemekbildirim/nginx/conf/default.host.conf /etc/nginx/sites-available/yemek
+sudo ln -s /etc/nginx/sites-available/yemek /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl reload nginx
+```
 
-Run this in PowerShell:
+---
 
-------------------------------------------------------------
-$Server = "http://192.168.2.211:8787"
-$Temp   = "$env:TEMP\YemekClient"
+# 🖥 Windows Client Installation
 
-New-Item -ItemType Directory -Force -Path $Temp | Out-Null
-Invoke-WebRequest "$Server/download/client.zip" -OutFile "$Temp\client.zip"
-Expand-Archive "$Temp\client.zip" -DestinationPath $Temp -Force
-Set-Location $Temp
+Requirements:
 
-Install-Module BurntToast -Scope CurrentUser -Force
-.\install_client.ps1 -ServerUrl $Server -PollingInterval 5
-------------------------------------------------------------
+* Windows 10 / 11
+* PowerShell 5.1+
+* BurntToast module
 
-This:
-- Downloads client
-- Extracts
-- Installs BurntToast
-- Creates Scheduled Task
-- Starts client
+---
 
-=
-METHOD B – GITHUB DIRECT DOWNLOAD
-=
+## ✅ Method A — One-Line Install (Recommended)
 
-------------------------------------------------------------
-$Repo   = "https://raw.githubusercontent.com/alemgir0/yemekbildirim/main/client"
-$Temp   = "$env:TEMP\YemekClient"
-$Server = "http://192.168.2.211:8787"
+Open PowerShell as Administrator:
 
-New-Item -ItemType Directory -Force -Path $Temp | Out-Null
+```powershell
+Invoke-WebRequest -Uri "http://192.168.2.211:8787/download/client.zip" -OutFile "$env:TEMP\yemek_client.zip"; Expand-Archive "$env:TEMP\yemek_client.zip" -DestinationPath "$env:TEMP\yemek_client" -Force; Set-Location "$env:TEMP\yemek_client"; .\install_client.ps1 -ServerUrl "http://192.168.2.211:8787" -PollingInterval 5
+```
 
-Invoke-WebRequest "$Repo/client.ps1" -OutFile "$Temp\client.ps1"
-Invoke-WebRequest "$Repo/install_client.ps1" -OutFile "$Temp\install_client.ps1"
-Invoke-WebRequest "$Repo/uninstall_client.ps1" -OutFile "$Temp\uninstall_client.ps1"
+✔ Downloads
+✔ Extracts
+✔ Installs Scheduled Task
+✔ Starts immediately
 
-Set-Location $Temp
-Install-Module BurntToast -Scope CurrentUser -Force
-.\install_client.ps1 -ServerUrl $Server -PollingInterval 5
-------------------------------------------------------------
+---
 
-=
-VERIFY CLIENT
-=
+## 🧩 Method B — Manual Install
 
-Check Scheduled Task:
+Download:
 
-schtasks /Query /TN "\YemekBildirimiClient"
+```
+http://<SERVER_IP>:8787/download/client.zip
+```
 
-Check logs:
+Extract and run:
 
-notepad $env:LOCALAPPDATA\YemekBildirimi\client.log
+```powershell
+cd client
+.\install_client.ps1 -ServerUrl "http://192.168.2.211:8787" -PollingInterval 5
+```
 
-=
-SERVER CONFIGURATION
-=
+---
 
-File:
-server/.env
+# 🔐 Security Model
 
-Example:
+### Server-Side Authentication
 
-YEMEK_API_KEY=your_random_key
+* HTTP Basic Auth protects `/panel`
+* Credentials stored in `server/.env`
+* Secure comparison using `secrets.compare_digest`
+
+### Optional IP Restriction
+
+In `server/.env`:
+
+```env
+PANEL_ALLOWED_IPS=192.168.2.0/24
+```
+
+### Optional Nginx Layer Auth
+
+Add `.htpasswd` for double protection.
+
+---
+
+# 🧾 Configuration
+
+`server/.env`
+
+```env
+YEMEK_API_KEY=auto_generated_key
 PANEL_USER=admin
-PANEL_PASS=strong_password
+PANEL_PASS=auto_generated_password
 PANEL_ALLOWED_IPS=
+```
 
-Restart server after changes:
+Restart after changes:
 
-cd server
+```bash
+cd /opt/yemekbildirim/server
 docker compose restart
+```
 
-=
-TROUBLESHOOTING
-=
+---
 
-Panel 401 Unauthorized:
-- Check PANEL_USER and PANEL_PASS in server/.env
+# 🧪 Verification
 
 Health check:
 
+```bash
 curl http://localhost:8787/health
+```
 
-Server logs:
+Panel test:
 
-docker logs yemek-server
+```bash
+curl -u admin:password http://localhost:8787/panel
+```
 
-Client not working:
-- Check BurntToast installed
-- Check Scheduled Task
-- Check client.log
+Docker status:
 
-=
-UPDATE SERVER
-=
+```bash
+docker ps
+```
 
+---
+
+# 🔄 Update Server
+
+```bash
 cd /opt/yemekbildirim
-git pull
+git pull origin main
 cd server
+docker compose down
 docker compose up -d --build
+```
 
-=
-UNINSTALL
-=
+---
 
-Client:
-
-schtasks /Delete /TN "\YemekBildirimiClient" /F
-Remove-Item "$env:LOCALAPPDATA\YemekBildirimi" -Recurse -Force
+# 📜 Logs
 
 Server:
 
+```bash
+docker logs yemek-server --tail 50 -f
+```
+
+Client:
+
+```powershell
+notepad $env:LOCALAPPDATA\YemekBildirimi\client.log
+```
+
+---
+
+# 🗑 Uninstall
+
+Server:
+
+```bash
 cd /opt/yemekbildirim/server
 docker compose down -v
 sudo rm -rf /opt/yemekbildirim
+```
 
-=
-END
-=
+Client:
+
+```powershell
+schtasks /Delete /TN "\YemekBildirimiClient" /F
+Remove-Item "$env:LOCALAPPDATA\YemekBildirimi" -Recurse -Force
+```
+
+---
+
+# 📌 FAQ
+
+**Where is data stored?**
+`server/data/state.json`
+
+**Can I run multiple clients?**
+Yes. Install on all Windows machines.
+
+**How to rotate API key?**
+Edit `.env` → restart container.
+
+---
+
+# 📄 License
+
+MIT License
+
+---
+
+İstersen bir sonraki adımda şunları da yapabiliriz:
+
+* 🔐 HTTPS + Let’s Encrypt otomatik kurulum ekleyelim
+* 🏢 Domain-based production deployment bölümü ekleyelim
+* 📦 Release versioning ve changelog yapısı oluşturalım
+* 🔄 GitHub Actions ile auto-build sistemi kuralım
+
