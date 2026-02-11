@@ -2,9 +2,9 @@
 
 Enterprise Notification System - Cafeteria announcement notifications for Windows clients.
 
-============================================================
+=
 OVERVIEW
-============================================================
+=
 
 YemekBildirim consists of:
 
@@ -18,9 +18,9 @@ Data Flow:
 3. Clients poll /latest endpoint
 4. New notifications trigger Windows Toast popups
 
-============================================================
+=
 QUICK SERVER INSTALL (RECOMMENDED)
-============================================================
+=
 
 Ubuntu/Debian one-liner:
 
@@ -45,9 +45,9 @@ http://<SERVER_IP>:8787/panel
 IMPORTANT:
 Installer prints credentials once. Save them immediately.
 
-============================================================
+=
 INSTALLATION MODES
-============================================================
+=
 
 OPTION A – Server Only (Default)
 --------------------------------
@@ -79,18 +79,18 @@ Use nginx/conf/default.host.conf
 Proxy upstream:
 127.0.0.1:8787
 
-============================================================
+=
 CLIENT INSTALLATION (WINDOWS)
-============================================================
+=
 
 REQUIREMENTS:
 - Windows 10/11
 - PowerShell 5.1+
 - BurntToast module
 
-============================================================
+=
 METHOD A – DOWNLOAD FROM SERVER (RECOMMENDED)
-============================================================
+=
 
 Run this in PowerShell:
 
@@ -114,9 +114,9 @@ This:
 - Creates Scheduled Task
 - Starts client
 
-============================================================
+=
 METHOD B – GITHUB DIRECT DOWNLOAD
-============================================================
+=
 
 ------------------------------------------------------------
 $Repo   = "https://raw.githubusercontent.com/alemgir0/yemekbildirim/main/client"
@@ -134,9 +134,9 @@ Install-Module BurntToast -Scope CurrentUser -Force
 .\install_client.ps1 -ServerUrl $Server -PollingInterval 5
 ------------------------------------------------------------
 
-============================================================
+=
 VERIFY CLIENT
-============================================================
+=
 
 Check Scheduled Task:
 
@@ -146,9 +146,9 @@ Check logs:
 
 notepad $env:LOCALAPPDATA\YemekBildirimi\client.log
 
-============================================================
+=
 SERVER CONFIGURATION
-============================================================
+=
 
 File:
 server/.env
@@ -165,9 +165,9 @@ Restart server after changes:
 cd server
 docker compose restart
 
-============================================================
+=
 TROUBLESHOOTING
-============================================================
+=
 
 Panel 401 Unauthorized:
 - Check PANEL_USER and PANEL_PASS in server/.env
@@ -185,18 +185,18 @@ Client not working:
 - Check Scheduled Task
 - Check client.log
 
-============================================================
+=
 UPDATE SERVER
-============================================================
+=
 
 cd /opt/yemekbildirim
 git pull
 cd server
 docker compose up -d --build
 
-============================================================
+=
 UNINSTALL
-============================================================
+=
 
 Client:
 
@@ -209,6 +209,6 @@ cd /opt/yemekbildirim/server
 docker compose down -v
 sudo rm -rf /opt/yemekbildirim
 
-============================================================
+=
 END
-============================================================
+=
