@@ -244,7 +244,7 @@ async def download_client(request: Request):
     # İsterseniz download'ları da allowlist'e bağlayın:
     # check_ip_allowed(request)
 
-    client_path = Path(__file__).resolve().parent / "client_payload"
+    client_path = Path("/app/client_payload")
     if not client_path.exists() or not client_path.is_dir():
         raise HTTPException(status_code=404, detail="Client files not found on server")
 

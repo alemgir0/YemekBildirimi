@@ -9,6 +9,9 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # app
 COPY app.py /app/app.py
 
+# client payload (Windows scripts etc.)
+COPY client_payload /app/client_payload
+
 # persistent data dir
 RUN mkdir -p /app/data
 
