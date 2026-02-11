@@ -143,7 +143,7 @@ Requirements:
 Open PowerShell as Administrator:
 
 ```powershell
-Invoke-WebRequest -Uri "http://192.168.2.211:8787/download/client.zip" -OutFile "$env:TEMP\yemek_client.zip"; Expand-Archive "$env:TEMP\yemek_client.zip" -DestinationPath "$env:TEMP\yemek_client" -Force; Set-Location "$env:TEMP\yemek_client"; .\install_client.ps1 -ServerUrl "http://192.168.2.211:8787" -PollingInterval 5
+Invoke-WebRequest -Uri "http://<SERVER_IP>:8787/download/client.zip" -OutFile "$env:TEMP\yemek_client.zip"; Expand-Archive "$env:TEMP\yemek_client.zip" -DestinationPath "$env:TEMP\yemek_client" -Force; Set-Location "$env:TEMP\yemek_client"; .\install_client.ps1 -ServerUrl "http://<SERVER_IP>:8787" -PollingInterval 5
 ```
 
 ✔ Downloads
@@ -165,7 +165,7 @@ Extract and run:
 
 ```powershell
 cd client
-.\install_client.ps1 -ServerUrl "http://192.168.2.211:8787" -PollingInterval 5
+.\install_client.ps1 -ServerUrl "http://<SERVER_IP>:8787" -PollingInterval 5
 ```
 
 ---
