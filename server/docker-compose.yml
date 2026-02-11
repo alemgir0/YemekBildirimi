@@ -9,6 +9,7 @@ services:
       DATA_DIR: /app/data
     volumes:
       - ./data:/app/data
+      - ../client:/app/client_payload:ro
     ports:
       - "8787:8787"
     healthcheck:
