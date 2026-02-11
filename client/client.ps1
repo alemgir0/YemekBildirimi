@@ -1,163 +1,134 @@
 param(
-  # Installer/VBS bu parametreyi geçiyor: -Server "http://x.x.x.x:8787"
-  [Parameter(Mandatory=$false)]
-  [string]$Server = $null,
-
-  # Opsiyonel: -PollingInterval 5
-  [Parameter(Mandatory=$false)]
+  [string]$ServerUrl = $null,
   [int]$PollingInterval = 5
 )
 
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+
+$BaseDir = Join-Path $env:LOCALAPPDATA "YemekBildirimi"
+if (-not (Test-Path $BaseDir)) { New-Item -Path $BaseDir -ItemType Directory -Force | Out-Null }
+
+$LogPath = Join-Path $BaseDir "client.log"
+$StatePath = Join-Path $BaseDir "state.json"
+$ConfigPath = Join-Path $BaseDir "config.json"
+
+function Write-Log([string]$Level, [string]$Msg) {
+  $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+  "$ts [$Level] $Msg" | Out-File -FilePath $LogPath -Append -Encoding UTF8
+}
+
+function Rotate-Log {
+  try {
+    if (Test-Path $LogPath) {
+      $len = (Get-Item $LogPath).Length
+      if ($len -gt 1048576) { # 1MB
+        $bak = Join-Path $BaseDir ("client_" + (Get-Date -Format "yyyyMMdd_HHmmss") + ".log")
+        Move-Item $LogPath $bak -Force
+      }
+    }
+  } catch {}
+}
+
+Rotate-Log
+Write-Log "INFO" "Starting YemekBildirimi Client..."
+
+# ---- Load config.json (preferred) ----
+if ((-not $ServerUrl) -and (Test-Path $ConfigPath)) {
+  try {
+    $cfg = Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($cfg.ServerUrl) { $ServerUrl = [string]$cfg.ServerUrl }
+    if ($cfg.PollingInterval) { $PollingInterval = [int]$cfg.PollingInterval }
+  } catch {
+    Write-Log "WARN" "Config parse failed: $($_.Exception.Message)"
+  }
+}
+
+if ([string]::IsNullOrWhiteSpace($ServerUrl)) {
+  Write-Log "ERROR" "ServerUrl not set (param or config.json). Exiting."
+  exit 2
+}
+
+if ($PollingInterval -lt 1 -or $PollingInterval -gt 3600) { $PollingInterval = 5 }
+
+# Normalize base URL
+$ServerUrl = $ServerUrl.TrimEnd("/")
+
+# ---- Single instance (Local mutex) ----
+$mutexName = "Local\YemekBildirimiClient"
+$createdNew = $false
+$mutex = New-Object System.Threading.Mutex($true, $mutexName, [ref]$createdNew)
+if (-not $createdNew) {
+  Write-Log "WARN" "Another instance is already running. Exiting."
+  exit 0
+}
+
+# ---- Load last seen id ----
+$lastSeen = 0
+if (Test-Path $StatePath) {
+  try {
+    $st = Get-Content $StatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($st.last_seen_id) { $lastSeen = [int]$st.last_seen_id }
+  } catch {}
+}
+
+function Save-State([int]$id) {
+  try {
+    @{ last_seen_id = $id } | ConvertTo-Json | Out-File -FilePath $StatePath -Encoding UTF8 -Force
+  } catch {}
+}
+
+# ---- Toast (BurntToast) ----
+$toastReady = $false
+try {
+  Import-Module BurntToast -ErrorAction Stop
+  $toastReady = $true
+} catch {
+  $toastReady = $false
+  Write-Log "WARN" "BurntToast not available. Notifications will be skipped."
+}
+
+function Show-Toast([string]$text) {
+  if (-not $toastReady) { return }
+  try {
+    New-BurntToastNotification -Text "🍽️ Yemek Bildirimi", $text | Out-Null
+  } catch {
+    Write-Log "WARN" "Toast failed: $($_.Exception.Message)"
+  }
+}
+
+# ---- Poll loop ----
 Add-Type -AssemblyName System.Net.Http
+$handler = New-Object System.Net.Http.HttpClientHandler
+$client = New-Object System.Net.Http.HttpClient($handler)
+$client.Timeout = [TimeSpan]::FromSeconds(10)
 
-# --- 0) Normalize inputs (never allow null to break the loop) ---
-if ([string]::IsNullOrWhiteSpace($Server)) {
-    # Fallback default (same as server compose exposure)
-    $Server = "http://192.168.2.210:8787"
-}
-if (-not $PollingInterval -or $PollingInterval -lt 1 -or $PollingInterval -gt 3600) {
-    $PollingInterval = 5
-}
+$latestUrl = "$ServerUrl/latest"
 
-# --- 1) Settings & Logs ---
-$LogDir = "$env:LOCALAPPDATA\YemekBildirimi"
-if (-not (Test-Path $LogDir)) { New-Item -Path $LogDir -ItemType Directory -Force | Out-Null }
-$LogFile = Join-Path $LogDir "client.log"
-
-$ScriptDir = $PSScriptRoot
-if (-not $ScriptDir) { $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
-
-$LogoPath = Join-Path $ScriptDir "assets\logo.png"
-
-function Write-Log {
-    param([string]$Message, [string]$Level = "INFO")
-    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $Entry = "[$Timestamp] [$Level] $Message"
-    Add-Content -Path $LogFile -Value $Entry -Encoding UTF8
-    Write-Host $Entry
-}
-
-Write-Log "Starting Client. Server: $Server | Interval: ${PollingInterval}s"
-
-# --- 2) Module Check ---
-try {
-    if (-not (Get-Module -Name BurntToast)) {
-        Import-Module BurntToast -ErrorAction Stop
+while ($true) {
+  try {
+    $resp = $client.GetAsync($latestUrl).Result
+    if (-not $resp.IsSuccessStatusCode) {
+      Write-Log "WARN" "HTTP $([int]$resp.StatusCode) calling /latest"
+      Start-Sleep -Seconds $PollingInterval
+      continue
     }
-}
-catch {
-    Write-Log "CRITICAL: BurntToast module could not be loaded. $_" "ERROR"
-}
 
-if (Test-Path $LogoPath) { Write-Log "Assets: Logo found at $LogoPath" }
-else { Write-Log "Assets: Logo NOT found at $LogoPath" "WARNING" }
+    $body = $resp.Content.ReadAsStringAsync().Result
+    $data = $body | ConvertFrom-Json
 
-# --- 3) Single Instance Mutex ---
-$MutexName = "Global\YemekBildirimiClient"
-$Mutex = $null
-$HasLock = $false
+    $id = [int]$data.id
+    $text = [string]$data.text
 
-try {
-    $createdNew = $false
-    $Mutex = [System.Threading.Mutex]::new($false, $MutexName, [ref]$createdNew)
-}
-catch {
-    Write-Log "Mutex Init Failed: $_" "ERROR"
-    exit 1
-}
-
-try {
-    if ($Mutex.WaitOne(0)) {
-        $HasLock = $true
+    if ($id -gt $lastSeen) {
+      $lastSeen = $id
+      Save-State -id $lastSeen
+      Write-Log "INFO" "New notification: ID=$id Text=$text"
+      Show-Toast -text $text
     }
-    else {
-        Write-Log "Instance already running. Exiting (0)." "INFO"
-        exit 0
-    }
-}
-catch {
-    Write-Log "Mutex WaitOne Failed: $_" "ERROR"
-    exit 1
-}
+  } catch {
+    Write-Log "WARN" "Poll error: $($_.Exception.Message)"
+  }
 
-# --- 4) HTTP Client (UTF-8) ---
-$HttpClient = [System.Net.Http.HttpClient]::new()
-$HttpClient.Timeout = [TimeSpan]::FromSeconds(10)
-
-function Get-LatestNotification {
-    try {
-        $Url = "$Server/latest"
-        $Bytes = $HttpClient.GetByteArrayAsync($Url).Result
-        $JsonString = [System.Text.Encoding]::UTF8.GetString($Bytes)
-        return ($JsonString | ConvertFrom-Json)
-    }
-    catch {
-        Write-Log "HTTP Error (latest): $_" "ERROR"
-        return $null
-    }
-}
-
-# --- 5) Local State ---
-$StateFile = Join-Path $LogDir "state.txt"
-$LastId = 0
-if (Test-Path $StateFile) {
-    try {
-        $LastId = [int](Get-Content $StateFile -ErrorAction Stop)
-        Write-Log "State loaded. Last ID: $LastId"
-    } catch {
-        Write-Log "State file unreadable. Starting fresh." "WARNING"
-        $LastId = 0
-    }
-} else {
-    Write-Log "First run detected (no state file). Syncing with server..." "INFO"
-}
-
-try {
-    Write-Log "Entering Polling Loop. Last ID: $LastId"
-
-    while ($true) {
-        $Data = Get-LatestNotification
-        if ($null -ne $Data) {
-            # Expecting fields like: id, text (based on your previous logs)
-            $ServerId = 0
-            $Text = $null
-
-            try { $ServerId = [int]$Data.id } catch { $ServerId = 0 }
-            try { $Text = [string]$Data.text } catch { $Text = "" }
-
-            if ($ServerId -lt $LastId) {
-                Write-Log "Server state reset detected. Local LastId=$LastId, ServerId=$ServerId. Resyncing without toast." "WARNING"
-                $LastId = $ServerId
-                $LastId | Out-File $StateFile -Encoding ascii -Force
-            }
-            elseif ($ServerId -gt $LastId) {
-                # Show toast
-                try {
-                    if (Get-Command -Name New-BurntToastNotification -ErrorAction SilentlyContinue) {
-                        New-BurntToastNotification -Text $Text -AppLogo $LogoPath -Silent:$false | Out-Null
-                        Write-Log "Toast Displayed."
-                    }
-                    else {
-                        Write-Log "BurntToast command not found!" "ERROR"
-                    }
-                }
-                catch {
-                    Write-Log "Toast Failed: $_" "ERROR"
-                }
-
-                $LastId = $ServerId
-                $LastId | Out-File $StateFile -Encoding ascii -Force
-            }
-        }
-
-        Start-Sleep -Seconds ([Math]::Max(1, [int]$PollingInterval))
-    }
-}
-finally {
-    if ($HttpClient) { $HttpClient.Dispose() }
-    if ($Mutex -and $HasLock) {
-        $Mutex.ReleaseMutex()
-        $Mutex.Dispose()
-    }
-    Write-Log "Shutdown."
+  Start-Sleep -Seconds $PollingInterval
 }

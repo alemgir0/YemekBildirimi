@@ -1,19 +1,37 @@
 services:
-  yemek-server:
-    build: .
+  server:
     container_name: yemek-server
-    restart: always
-    env_file:
-      - .env
-    environment:
-      DATA_DIR: /app/data
-    volumes:
-      - ./data:/app/data
-      - ../client:/app/client_payload:ro
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+
+    # Default: 8787:8787  (override: PORT_BIND=127.0.0.1:8787:8787)
     ports:
-      - "8787:8787"
-    healthcheck:
-      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/health')\"" ]
-      interval: 30s
-      timeout: 3s
-      retries: 3
+      - "${PORT_BIND:-8787:8787}"
+
+    environment:
+      - YEMEK_API_KEY
+      - PANEL_USER
+      - PANEL_PASS
+      - PANEL_ALLOWED_IPS
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+    restart: unless-stopped
+
+    mem_limit: 128m
+    cpus: 0.25
+
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    volumes:
+      - server_data:/app/data
+
+volumes:
+  server_data:

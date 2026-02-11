@@ -11,7 +11,13 @@ from pathlib import Path
 from threading import Lock
 
 from fastapi import FastAPI, Header, HTTPException, Depends, Request, Form, status
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    RedirectResponse,
+    JSONResponse,
+    StreamingResponse,
+    PlainTextResponse,
+)
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 
@@ -91,6 +97,11 @@ last_notification_time: float = 0.0
 
 
 def get_client_ip(request: Request) -> str:
+    # Reverse proxy varsa gerçek client IP'yi yakala
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        # x-forwarded-for: "client, proxy1, proxy2"
+        return xff.split(",")[0].strip()
     return request.client.host
 
 
@@ -121,7 +132,9 @@ def check_ip_allowed(request: Request):
             logger.warning(f"Invalid Allowlist Rule: {rule}")
             continue
 
-    logger.warning(f"Access Denied (IP Blocked): {client_ip} | allowlist={PANEL_ALLOWED_IPS_STR}")
+    logger.warning(
+        f"Access Denied (IP Blocked): {client_ip} | allowlist={PANEL_ALLOWED_IPS_STR}"
+    )
     raise HTTPException(status_code=403, detail="Access denied")
 
 
@@ -141,7 +154,10 @@ def verify_panel_auth(credentials: HTTPBasicCredentials = Depends(security)):
     t_user = PANEL_USER.encode("utf-8")
     t_pass = PANEL_PASS.encode("utf-8")
 
-    if not (secrets.compare_digest(c_user, t_user) and secrets.compare_digest(c_pass, t_pass)):
+    if not (
+        secrets.compare_digest(c_user, t_user)
+        and secrets.compare_digest(c_pass, t_pass)
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -172,7 +188,9 @@ def do_notify(text: str, source: str) -> int:
         save_state(STATE)
 
     last_notification_time = now
-    logger.info(f"NOTIFICATION TRIGGERED | Source={source} | ID={new_id} | Text={text}")
+    logger.info(
+        f"NOTIFICATION TRIGGERED | Source={source} | ID={new_id} | Text={text}"
+    )
     return new_id
 
 
@@ -184,6 +202,20 @@ def get_latest_state() -> dict:
             "ts": float(latest.get("ts", time.time())),
             "text": str(latest.get("text", "")),
         }
+
+
+def get_base_url(request: Request) -> str:
+    # Reverse proxy / nginx varsa doğru base'i yakala
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", ""))
+
+    if host and "," in host:
+        host = host.split(",")[0].strip()
+
+    if not host:
+        host = request.url.netloc
+
+    return f"{proto}://{host}"
 
 
 # -----------------------------------------------------------------------------
@@ -208,8 +240,11 @@ async def notify(body: NotifyRequest, api_key: str = Depends(verify_api_key)):
 
 
 @app.get("/download/client.zip")
-async def download_client():
-    client_path = pathlib.Path("client_payload")
+async def download_client(request: Request):
+    # İsterseniz download'ları da allowlist'e bağlayın:
+    # check_ip_allowed(request)
+
+    client_path = Path(__file__).resolve().parent / "client_payload"
     if not client_path.exists() or not client_path.is_dir():
         raise HTTPException(status_code=404, detail="Client files not found on server")
 
@@ -217,13 +252,52 @@ async def download_client():
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for root, _, files in os.walk(client_path):
             for file in files:
-                file_path = pathlib.Path(root) / file
+                file_path = Path(root) / file
                 relative_path = file_path.relative_to(client_path)
                 zip_file.write(file_path, arcname=str(relative_path))
 
     buffer.seek(0)
     headers = {"Content-Disposition": 'attachment; filename="client.zip"'}
     return StreamingResponse(buffer, media_type="application/zip", headers=headers)
+
+
+@app.get("/download/install.ps1")
+async def download_install_ps1(request: Request):
+    # İsterseniz download'ları da allowlist'e bağlayın:
+    # check_ip_allowed(request)
+
+    base = get_base_url(request)
+
+    ps1 = rf'''$ErrorActionPreference = "Stop"
+
+$Base = "{base}"
+$ZipUrl = "$Base/download/client.zip"
+
+$TempRoot = Join-Path $env:TEMP ("yemek_client_" + [guid]::NewGuid().ToString("N"))
+$ZipPath = Join-Path $TempRoot "client.zip"
+$ExtractDir = Join-Path $TempRoot "client"
+
+New-Item -ItemType Directory -Path $TempRoot -Force | Out-Null
+
+Write-Host "[*] Downloading: $ZipUrl"
+Invoke-WebRequest -Uri $ZipUrl -OutFile $ZipPath -UseBasicParsing
+
+Write-Host "[*] Extracting..."
+Expand-Archive -Path $ZipPath -DestinationPath $ExtractDir -Force
+
+Set-Location $ExtractDir
+
+if (-not (Test-Path ".\install_client.ps1")) {{
+  Write-Host "CRITICAL: install_client.ps1 not found in client payload." -ForegroundColor Red
+  exit 2
+}}
+
+Write-Host "[*] Installing (Current User)..."
+.\install_client.ps1 -ServerUrl $Base -PollingInterval 5
+
+Write-Host "[+] Done."
+'''
+    return PlainTextResponse(ps1, media_type="text/plain; charset=utf-8")
 
 
 @app.get("/panel", response_class=HTMLResponse)
@@ -266,7 +340,8 @@ async def panel(request: Request, username: str = Depends(verify_panel_auth)):
                 <div style="color: #2d3748; font-weight: 500;">{current_text}</div>
             </div>
             <div class="links">
-                <a href="/download/client.zip">📥 Client Dosyalarını İndir (.zip)</a>
+                <a href="/download/client.zip">📥 Client Dosyalarını İndir (.zip)</a><br>
+                <a href="/download/install.ps1">⚡ Tek Satır Kurulum (install.ps1)</a>
             </div>
         </div>
     </body>

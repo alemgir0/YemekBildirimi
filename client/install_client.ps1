@@ -1,52 +1,159 @@
 param(
-    [string]$ServerUrl = "https://yemek.example.com",
-    [int]$PollingInterval = 5
+  [Parameter(Mandatory = $true)]
+  [string]$ServerUrl,
+
+  [int]$PollingInterval = 5,
+
+  [string]$InstallDir = "$env:LOCALAPPDATA\YemekBildirimi",
+
+  [string]$TaskName = "YemekBildirimiClient"
 )
 
-Write-Host ">>> YemekBildirimi Installer (Scheduled Task) <<<"
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
 
-$Source = $PSScriptRoot
-$Target = Join-Path $env:LOCALAPPDATA "YemekBildirimi"
-$TaskName = "YemekBildirimiClient"
+Write-Host ">>> YemekBildirimi Client Installer (Current User) <<<"
+Write-Host "ServerUrl: $ServerUrl"
+Write-Host "PollingInterval: $PollingInterval"
+Write-Host "InstallDir: $InstallDir"
+Write-Host "TaskName: $TaskName"
 
-Write-Host "Source: $Source"
-Write-Host "Target: $Target"
-Write-Host "Server: $ServerUrl"
-Write-Host "Interval: ${PollingInterval}s"
+if ($PollingInterval -lt 1 -or $PollingInterval -gt 3600) { $PollingInterval = 5 }
+$ServerUrl = $ServerUrl.TrimEnd("/")
 
-# 1) Kopyala
-New-Item -Force -ItemType Directory $Target | Out-Null
-Write-Host "[*] Copying files..."
-$cmd = "robocopy `"$Source`" `"$Target`" /E /R:2 /W:2"
-cmd /c $cmd | Out-Null
-
-# 2) Legacy: eski kurulum klasörü (USERPROFILE\YemekBildirimi) varsa taşı
-$Old1 = Join-Path $env:USERPROFILE "YemekBildirimi"
-$Old2 = Join-Path $env:LOCALAPPDATA "YemekBildirimi_old"
-if (Test-Path $Old1) {
-    Write-Host "[*] Old install found: $Old1 -> moving to $Old2"
-    Remove-Item $Old2 -Recurse -Force -ErrorAction SilentlyContinue
-    Move-Item $Old1 $Old2 -Force
+function Try-StopExistingTask {
+  try {
+    $t = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($t) {
+      Write-Host "[*] Existing scheduled task found. Removing..."
+      try { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue } catch {}
+      Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+    }
+  } catch {
+    Write-Warning "ScheduledTask cleanup failed: $($_.Exception.Message)"
+  }
 }
 
-# 3) Legacy: eski Startup VBS varsa kaldır (artık Task kullanıyoruz)
-$Vbs = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\YemekBildirimiClient.vbs"
-Remove-Item $Vbs -Force -ErrorAction SilentlyContinue
+function Try-StopRunningClient {
+  try {
+    $procs = Get-CimInstance Win32_Process |
+      Where-Object {
+        $_.Name -ieq "powershell.exe" -and $_.CommandLine -and
+        ($_.CommandLine -like "*client.ps1*" -or $_.CommandLine -like "*YemekBildirimi*")
+      }
 
-# 4) Legacy: eski Scheduled Task varsa sil
-Write-Host "[*] Removing legacy scheduled task (if any)..."
-schtasks /Delete /TN "\$TaskName" /F 2>$null | Out-Null
+    foreach ($p in $procs) {
+      Write-Host "[*] Stopping running client PID=$($p.ProcessId)"
+      Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+  } catch {
+    Write-Warning "Process stop failed: $($_.Exception.Message)"
+  }
+}
 
-# 5) Scheduled Task oluştur
-Write-Host "[*] Creating Scheduled Task..."
-$ClientPs = Join-Path $Target "client.ps1"
-$TR = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ClientPs`" -Server `"$ServerUrl`" -PollingInterval $PollingInterval"
+function Ensure-InstallDir {
+  if (-not (Test-Path -LiteralPath $InstallDir)) {
+    New-Item -Path $InstallDir -ItemType Directory -Force | Out-Null
+  }
+}
 
-schtasks /Create /F /TN "\$TaskName" /SC ONLOGON /DELAY 0000:10 /TR "$TR" | Out-Null
+function Copy-ClientFiles {
+  param([string]$SourcePath)
 
-# 6) Hemen başlat
-schtasks /Run /TN "\$TaskName" | Out-Null
+  Ensure-InstallDir
 
-Write-Host "[+] Installation Complete!"
-Write-Host "    Logs: $Target\client.log"
-Write-Host "    Task: \${TaskName} (ONLOGON)"
+  Write-Host "[*] Copying client files..."
+  try {
+    robocopy $SourcePath $InstallDir /E /R:2 /W:2 /NJH /NJS /NFL /NDL | Out-Null
+    if ($LASTEXITCODE -gt 7) { throw "Robocopy failed with exit code $LASTEXITCODE" }
+  } catch {
+    Write-Warning "Robocopy failed, falling back to Copy-Item: $($_.Exception.Message)"
+    Copy-Item -Path (Join-Path $SourcePath '*') -Destination $InstallDir -Recurse -Force
+  }
+
+  $clientPs1 = Join-Path $InstallDir "client.ps1"
+  if (-not (Test-Path -LiteralPath $clientPs1)) {
+    throw "CRITICAL: client.ps1 not found after copy."
+  }
+}
+
+function Write-Config {
+  $cfg = @{
+    ServerUrl        = $ServerUrl
+    PollingInterval  = $PollingInterval
+  } | ConvertTo-Json -Depth 3
+
+  $cfgPath = Join-Path $InstallDir "config.json"
+  $cfg | Out-File -FilePath $cfgPath -Encoding UTF8 -Force
+  Write-Host "[*] Config written: $cfgPath"
+}
+
+function Ensure-BurntToast {
+  try {
+    if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue)) {
+      Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
+    }
+    if (-not (Get-Module -ListAvailable -Name BurntToast)) {
+      Install-Module -Name BurntToast -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck
+    }
+  } catch {
+    Write-Warning "BurntToast install skipped: $($_.Exception.Message)"
+  }
+}
+
+function Remove-StartupFallback {
+  try {
+    $startupDir = [Environment]::GetFolderPath("Startup")
+    $vbsPath = Join-Path $startupDir "YemekBildirimiClient.vbs"
+    if (Test-Path $vbsPath) { Remove-Item $vbsPath -Force }
+  } catch {}
+}
+
+function Install-ScheduledTaskOrFallback {
+  $clientPs1 = Join-Path $InstallDir "client.ps1"
+
+  $arg = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$clientPs1`""
+  $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arg
+  $trigger = New-ScheduledTaskTrigger -AtLogOn
+  $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew
+
+  try {
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType InteractiveToken -RunLevel LeastPrivilege
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
+    Start-ScheduledTask -TaskName $TaskName
+    Write-Host "[+] Scheduled Task installed & started."
+    return
+  } catch {
+    Write-Warning "ScheduledTask failed: $($_.Exception.Message)"
+  }
+
+  # Fallback: Startup VBS
+  try {
+    $startupDir = [Environment]::GetFolderPath("Startup")
+    $vbsPath = Join-Path $startupDir "YemekBildirimiClient.vbs"
+
+    $escaped = $clientPs1.Replace('"','""')
+    $vbs = @"
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""$escaped""", 0, False
+"@
+    $vbs | Out-File -FilePath $vbsPath -Encoding ascii -Force
+    Write-Host "[+] Startup fallback installed: $vbsPath"
+  } catch {
+    throw "Both ScheduledTask and Startup fallback failed: $($_.Exception.Message)"
+  }
+}
+
+# ---- MAIN ----
+Try-StopExistingTask
+Try-StopRunningClient
+Remove-StartupFallback
+Ensure-BurntToast
+
+$source = $PSScriptRoot
+Copy-ClientFiles -SourcePath $source
+Write-Config
+Install-ScheduledTaskOrFallback
+
+Write-Host "[+] Done."
+Write-Host "Logs: $(Join-Path $InstallDir 'client.log')"
