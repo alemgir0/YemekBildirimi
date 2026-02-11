@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-REPO_URL="${REPO_URL:-https://github.com/alemgir0/yemekbildirim.git}"
+REPO_URL="${REPO_URL:-https://github.com/alemgir0/YemekBildirimi.git}"
 BRANCH="${BRANCH:-main}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/yemekbildirim}"
 
