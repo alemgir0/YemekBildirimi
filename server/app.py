@@ -10,7 +10,6 @@ import pathlib
 from pathlib import Path
 from threading import Lock
 
-from typing import Optional
 from fastapi import FastAPI, Header, HTTPException, Depends, Request, Form, status
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -35,11 +34,13 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
 STATE_FILE = DATA_DIR / "state.json"
 _state_lock = Lock()
 
+
 def _default_state() -> dict:
     return {
         "last_id": 0,
         "latest": {"id": 0, "ts": time.time(), "text": "Sistem başlatıldı."},
     }
+
 
 def load_state() -> dict:
     try:
@@ -50,14 +51,15 @@ def load_state() -> dict:
         logger.warning(f"STATE LOAD FAILED: {e}")
     return _default_state()
 
+
 def save_state(state: dict) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     tmp = STATE_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
     tmp.replace(STATE_FILE)
 
+
 STATE = load_state()
-# Ensure state file exists on disk even before first notification
 try:
     with _state_lock:
         save_state(STATE)
@@ -65,32 +67,38 @@ except Exception as e:
     logger.warning(f"STATE INIT SAVE FAILED: {e}")
 
 # -----------------------------------------------------------------------------
-# Configuration
+# Configuration (backward compatible)
 # -----------------------------------------------------------------------------
-API_KEY = os.getenv("YEMEK_API_KEY")
-PANEL_USER = os.getenv("PANEL_USER", "admin")
-PANEL_PASS = os.getenv("PANEL_PASS", "admin")
-PANEL_ALLOWED_IPS_STR = os.getenv("PANEL_ALLOWED_IPS", "")
+API_KEY = os.getenv("YEMEK_API_KEY") or os.getenv("API_KEY")  # optional legacy
+
+# Prefer PANEL_*, fallback to AUTH_* (older installs), then defaults
+PANEL_USER = os.getenv("PANEL_USER") or os.getenv("AUTH_USER") or "admin"
+PANEL_PASS = os.getenv("PANEL_PASS") or os.getenv("AUTH_PASS") or "admin"
+
+PANEL_ALLOWED_IPS_STR = os.getenv("PANEL_ALLOWED_IPS", "").strip()
 
 security = HTTPBasic()
 
+
 class NotifyRequest(BaseModel):
     text: str
+
 
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
 last_notification_time: float = 0.0
 
+
 def get_client_ip(request: Request) -> str:
     return request.client.host
+
 
 def check_ip_allowed(request: Request):
     if not PANEL_ALLOWED_IPS_STR:
         return
 
     client_ip = get_client_ip(request)
-    logger.info(f"Panel access attempt from IP: {client_ip} | allowlist={PANEL_ALLOWED_IPS_STR}")
     allowed_list = [x.strip() for x in PANEL_ALLOWED_IPS_STR.split(",") if x.strip()]
     if not allowed_list:
         return
@@ -101,36 +109,37 @@ def check_ip_allowed(request: Request):
         logger.warning(f"Access Denied (Invalid IP): {client_ip}")
         raise HTTPException(status_code=403, detail="Access denied")
 
-    allowed = False
     for rule in allowed_list:
         try:
             if "/" in rule:
                 if ip_obj in ipaddress.ip_network(rule, strict=False):
-                    allowed = True
-                    break
+                    return
             else:
                 if str(ip_obj) == rule:
-                    allowed = True
-                    break
+                    return
         except ValueError:
             logger.warning(f"Invalid Allowlist Rule: {rule}")
             continue
 
-    if not allowed:
-        logger.warning(f"Access Denied (IP Blocked): {client_ip}")
-        raise HTTPException(status_code=403, detail="Access denied")
+    logger.warning(f"Access Denied (IP Blocked): {client_ip} | allowlist={PANEL_ALLOWED_IPS_STR}")
+    raise HTTPException(status_code=403, detail="Access denied")
+
 
 def verify_api_key(x_api_key: str = Header(...)):
+    # If API_KEY is not set, fail closed (safer)
+    if not API_KEY:
+        raise HTTPException(status_code=500, detail="Server API key is not configured")
     if x_api_key != API_KEY:
         logger.warning("Access Denied (Invalid API Key)")
         raise HTTPException(status_code=401, detail="Invalid API Key")
     return x_api_key
 
+
 def verify_panel_auth(credentials: HTTPBasicCredentials = Depends(security)):
-    c_user = credentials.username.encode("utf8")
-    t_user = PANEL_USER.encode("utf8")
-    c_pass = credentials.password.encode("utf8")
-    t_pass = PANEL_PASS.encode("utf8")
+    c_user = credentials.username.encode("utf-8")
+    c_pass = credentials.password.encode("utf-8")
+    t_user = PANEL_USER.encode("utf-8")
+    t_pass = PANEL_PASS.encode("utf-8")
 
     if not (secrets.compare_digest(c_user, t_user) and secrets.compare_digest(c_pass, t_pass)):
         raise HTTPException(
@@ -140,36 +149,32 @@ def verify_panel_auth(credentials: HTTPBasicCredentials = Depends(security)):
         )
     return credentials.username
 
+
 def check_spam():
     global last_notification_time
     now = time.time()
     if now - last_notification_time < 2:
         raise HTTPException(status_code=429, detail="Lütfen biraz bekleyin (Rate Limit).")
 
-def do_notify(text: str, source: str):
-    """
-    Increment ID + write latest notification to persistent state.
-    """
+
+def do_notify(text: str, source: str) -> int:
     global last_notification_time
     now = time.time()
 
     with _state_lock:
-        # Ensure state has required keys
         if "last_id" not in STATE or "latest" not in STATE:
             STATE.clear()
             STATE.update(_default_state())
 
         STATE["last_id"] = int(STATE.get("last_id", 0)) + 1
         new_id = STATE["last_id"]
-
         STATE["latest"] = {"id": new_id, "ts": now, "text": text}
         save_state(STATE)
 
     last_notification_time = now
-    # Normal event -> INFO
-    logger.info(f"NOTIFICATION TRIGGERED | Source: {source} | ID: {new_id} | Text: {text}")
-
+    logger.info(f"NOTIFICATION TRIGGERED | Source={source} | ID={new_id} | Text={text}")
     return new_id
+
 
 def get_latest_state() -> dict:
     with _state_lock:
@@ -180,6 +185,7 @@ def get_latest_state() -> dict:
             "text": str(latest.get("text", "")),
         }
 
+
 # -----------------------------------------------------------------------------
 # Endpoints
 # -----------------------------------------------------------------------------
@@ -187,10 +193,12 @@ def get_latest_state() -> dict:
 async def health_check():
     return {"ok": True}
 
+
 @app.get("/latest")
 async def get_latest():
     data = get_latest_state()
     return JSONResponse(content=data, media_type="application/json; charset=utf-8")
+
 
 @app.post("/notify")
 async def notify(body: NotifyRequest, api_key: str = Depends(verify_api_key)):
@@ -198,9 +206,9 @@ async def notify(body: NotifyRequest, api_key: str = Depends(verify_api_key)):
     new_id = do_notify(body.text, source="API")
     return {"ok": True, "id": new_id}
 
+
 @app.get("/download/client.zip")
 async def download_client():
-    # (kullanmıyor olsanız da kalsın)
     client_path = pathlib.Path("client_payload")
     if not client_path.exists() or not client_path.is_dir():
         raise HTTPException(status_code=404, detail="Client files not found on server")
@@ -217,8 +225,9 @@ async def download_client():
     headers = {"Content-Disposition": 'attachment; filename="client.zip"'}
     return StreamingResponse(buffer, media_type="application/zip", headers=headers)
 
+
 @app.get("/panel", response_class=HTMLResponse)
-async def panel(request: Request):
+async def panel(request: Request, username: str = Depends(verify_panel_auth)):
     check_ip_allowed(request)
 
     latest = get_latest_state()
@@ -265,21 +274,32 @@ async def panel(request: Request):
     """
     return html
 
+
 @app.post("/panel/notify")
-async def panel_notify(request: Request, text: str = Form(...)):
+async def panel_notify(
+    request: Request,
+    text: str = Form(...),
+    username: str = Depends(verify_panel_auth),
+):
     check_ip_allowed(request)
     try:
         check_spam()
-        new_id = do_notify(text, source="Panel")
+        do_notify(text, source="Panel")
         return RedirectResponse(url="/panel", status_code=status.HTTP_303_SEE_OTHER)
     except HTTPException as e:
         if e.status_code == 429:
             return HTMLResponse(
-                content=f"<h2 style='text-align:center;font-family:sans-serif'>⏳ Aşırı yüklenme. {e.detail}</h2><p style='text-align:center'><a href='/panel'>Geri Dön</a></p>",
+                content=(
+                    "<h2 style='text-align:center;font-family:sans-serif'>"
+                    f"⏳ Aşırı yüklenme. {e.detail}"
+                    "</h2><p style='text-align:center'><a href='/panel'>Geri Dön</a></p>"
+                ),
                 status_code=429,
             )
         raise e
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8787, log_level="info")
