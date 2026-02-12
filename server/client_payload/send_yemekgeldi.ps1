@@ -1,7 +1,10 @@
 ﻿param(
-  [string]$Server = "http://192.168.2.211:8787",
+  [Parameter(Mandatory=$true)]
+  [string]$Server,
+
   [Parameter(Mandatory=$true)]
   [string]$ApiKey,
+
   [string]$Message = "🍽️ Yemek geldi! Afiyet olsun."
 )
 
