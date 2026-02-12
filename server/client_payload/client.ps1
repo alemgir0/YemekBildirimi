@@ -9,9 +9,10 @@ $ProgressPreference = "SilentlyContinue"
 $BaseDir = Join-Path $env:LOCALAPPDATA "YemekBildirimi"
 if (-not (Test-Path $BaseDir)) { New-Item -Path $BaseDir -ItemType Directory -Force | Out-Null }
 
-$LogPath = Join-Path $BaseDir "client.log"
-$StatePath = Join-Path $BaseDir "state.json"
+$LogPath    = Join-Path $BaseDir "client.log"
+$StatePath  = Join-Path $BaseDir "state.json"
 $ConfigPath = Join-Path $BaseDir "config.json"
+$LogoPath   = Join-Path $BaseDir "assets\logo.png"
 
 function Write-Log([string]$Level, [string]$Msg) {
   $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
@@ -22,7 +23,7 @@ function Rotate-Log {
   try {
     if (Test-Path $LogPath) {
       $len = (Get-Item $LogPath).Length
-      if ($len -gt 1048576) { # 1MB
+      if ($len -gt 1048576) {
         $bak = Join-Path $BaseDir ("client_" + (Get-Date -Format "yyyyMMdd_HHmmss") + ".log")
         Move-Item $LogPath $bak -Force
       }
@@ -50,11 +51,9 @@ if ([string]::IsNullOrWhiteSpace($ServerUrl)) {
 }
 
 if ($PollingInterval -lt 1 -or $PollingInterval -gt 3600) { $PollingInterval = 5 }
-
-# Normalize base URL
 $ServerUrl = $ServerUrl.TrimEnd("/")
 
-# ---- Single instance (Local mutex) ----
+# ---- Single instance ----
 $mutexName = "Local\YemekBildirimiClient"
 $createdNew = $false
 $mutex = New-Object System.Threading.Mutex($true, $mutexName, [ref]$createdNew)
@@ -91,7 +90,12 @@ try {
 function Show-Toast([string]$text) {
   if (-not $toastReady) { return }
   try {
-    New-BurntToastNotification -Text "🍽️ Yemek Bildirimi", $text | Out-Null
+    if (Test-Path -LiteralPath $LogoPath) {
+      New-BurntToastNotification -Text "Yemek Bildirimi", $text -AppLogo $LogoPath | Out-Null
+    } else {
+      New-BurntToastNotification -Text "Yemek Bildirimi", $text | Out-Null
+      Write-Log "WARN" "Logo not found at $LogoPath (toast used default icon)."
+    }
   } catch {
     Write-Log "WARN" "Toast failed: $($_.Exception.Message)"
   }
@@ -100,7 +104,7 @@ function Show-Toast([string]$text) {
 # ---- Poll loop ----
 Add-Type -AssemblyName System.Net.Http
 $handler = New-Object System.Net.Http.HttpClientHandler
-$client = New-Object System.Net.Http.HttpClient($handler)
+$client  = New-Object System.Net.Http.HttpClient($handler)
 $client.Timeout = [TimeSpan]::FromSeconds(10)
 
 $latestUrl = "$ServerUrl/latest"
@@ -117,7 +121,7 @@ while ($true) {
     $body = $resp.Content.ReadAsStringAsync().Result
     $data = $body | ConvertFrom-Json
 
-    $id = [int]$data.id
+    $id   = [int]$data.id
     $text = [string]$data.text
 
     if ($id -gt $lastSeen) {
@@ -132,5 +136,3 @@ while ($true) {
 
   Start-Sleep -Seconds $PollingInterval
 }
-
-

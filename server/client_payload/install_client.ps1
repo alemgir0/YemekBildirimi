@@ -29,8 +29,7 @@ function Try-StopExistingTask {
       try { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue } catch {}
       Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     }
-  }
-  catch {
+  } catch {
     Write-Warning "ScheduledTask cleanup failed: $($_.Exception.Message)"
   }
 }
@@ -38,17 +37,16 @@ function Try-StopExistingTask {
 function Try-StopRunningClient {
   try {
     $procs = Get-CimInstance Win32_Process |
-    Where-Object {
-      $_.Name -ieq "powershell.exe" -and $_.CommandLine -and
-      ($_.CommandLine -like "*client.ps1*" -or $_.CommandLine -like "*YemekBildirimi*")
-    }
+      Where-Object {
+        $_.Name -ieq "powershell.exe" -and $_.CommandLine -and
+        ($_.CommandLine -like "*client.ps1*" -or $_.CommandLine -like "*YemekBildirimi*")
+      }
 
     foreach ($p in $procs) {
       Write-Host "[*] Stopping running client PID=$($p.ProcessId)"
       Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
     }
-  }
-  catch {
+  } catch {
     Write-Warning "Process stop failed: $($_.Exception.Message)"
   }
 }
@@ -78,14 +76,12 @@ function Copy-ClientFiles {
     throw "CRITICAL: client.ps1 not found after copy."
   }
 
-  # Ensure assets/logo.png copied (needed for toast AppLogo)
+  # ---- Guarantee assets/logo.png exists if shipped ----
   $srcLogo = Join-Path $SourcePath "assets\logo.png"
-  if (Test-Path -LiteralPath $srcLogo) {
-    $dstAssets = Join-Path $InstallDir "assets"
-    $dstLogo = Join-Path $dstAssets "logo.png"
-    if (-not (Test-Path -LiteralPath $dstAssets)) {
-      New-Item -Path $dstAssets -ItemType Directory -Force | Out-Null
-    }
+  $dstLogo = Join-Path $InstallDir "assets\logo.png"
+  if ((Test-Path -LiteralPath $srcLogo) -and (-not (Test-Path -LiteralPath $dstLogo))) {
+    Write-Host "[*] assets missing after copy, forcing logo copy..."
+    New-Item -Path (Split-Path $dstLogo -Parent) -ItemType Directory -Force | Out-Null
     Copy-Item -LiteralPath $srcLogo -Destination $dstLogo -Force
   }
 }
@@ -109,8 +105,7 @@ function Ensure-BurntToast {
     if (-not (Get-Module -ListAvailable -Name BurntToast)) {
       Install-Module -Name BurntToast -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck
     }
-  }
-  catch {
+  } catch {
     Write-Warning "BurntToast install skipped: $($_.Exception.Message)"
   }
 }
@@ -120,23 +115,7 @@ function Remove-StartupFallback {
     $startupDir = [Environment]::GetFolderPath("Startup")
     $vbsPath = Join-Path $startupDir "YemekBildirimiClient.vbs"
     if (Test-Path $vbsPath) { Remove-Item $vbsPath -Force }
-  }
-  catch {}
-}
-
-function Install-StartupFallback {
-  param([string]$ClientPs1Path)
-
-  $startupDir = [Environment]::GetFolderPath("Startup")
-  $vbsPath = Join-Path $startupDir "YemekBildirimiClient.vbs"
-
-  $escaped = $ClientPs1Path.Replace('"', '""')
-  $vbs = @"
-Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""$escaped""", 0, False
-"@
-  $vbs | Out-File -FilePath $vbsPath -Encoding ascii -Force
-  Write-Host "[+] Startup fallback installed: $vbsPath"
+  } catch {}
 }
 
 function Install-ScheduledTaskOrFallback {
@@ -148,49 +127,35 @@ function Install-ScheduledTaskOrFallback {
   $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew
 
   try {
+    # Compatibility: LogonType / RunLevel enum differs by Windows versions
     $principal = $null
-
-    # Compatibility: different Windows/PS versions expose different enum names
-    $logonTypes = @("InteractiveToken", "Interactive")
-    $runLevels = @("LeastPrivilege", "Limited", "Highest")  # CurrentUser install prefers LeastPrivilege/Limited
-
-    $lastErr = $null
-    foreach ($lt in $logonTypes) {
-      foreach ($rl in $runLevels) {
-        try {
-          $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType $lt -RunLevel $rl
-          $lastErr = $null
-          break
-        }
-        catch {
-          $lastErr = $_
-          $principal = $null
-        }
-      }
-      if ($principal) { break }
-    }
-
-    if (-not $principal) {
-      throw "Unable to create ScheduledTaskPrincipal. Last error: $($lastErr.Exception.Message)"
+    try {
+      $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+    } catch {
+      $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
     }
 
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
     Start-ScheduledTask -TaskName $TaskName
     Write-Host "[+] Scheduled Task installed & started."
-
-    # If task installed OK, remove Startup fallback if exists
-    Remove-StartupFallback
     return
-  }
-  catch {
+  } catch {
     Write-Warning "ScheduledTask failed: $($_.Exception.Message)"
   }
 
   # Fallback: Startup VBS
   try {
-    Install-StartupFallback -ClientPs1Path $clientPs1
-  }
-  catch {
+    $startupDir = [Environment]::GetFolderPath("Startup")
+    $vbsPath = Join-Path $startupDir "YemekBildirimiClient.vbs"
+
+    $escaped = $clientPs1.Replace('"','""')
+    $vbs = @"
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""$escaped""", 0, False
+"@
+    $vbs | Out-File -FilePath $vbsPath -Encoding ascii -Force
+    Write-Host "[+] Startup fallback installed: $vbsPath"
+  } catch {
     throw "Both ScheduledTask and Startup fallback failed: $($_.Exception.Message)"
   }
 }
@@ -208,4 +173,3 @@ Install-ScheduledTaskOrFallback
 
 Write-Host "[+] Done."
 Write-Host "Logs: $(Join-Path $InstallDir 'client.log')"
-
