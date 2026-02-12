@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$ServerUrl = $null,
   [int]$PollingInterval = 5
 )
