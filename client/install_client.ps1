@@ -79,8 +79,8 @@ function Copy-ClientFiles {
 
 function Write-Config {
   $cfg = @{
-    ServerUrl        = $ServerUrl
-    PollingInterval  = $PollingInterval
+    ServerUrl       = $ServerUrl
+    PollingInterval = $PollingInterval
   } | ConvertTo-Json -Depth 3
 
   $cfgPath = Join-Path $InstallDir "config.json"
@@ -109,6 +109,21 @@ function Remove-StartupFallback {
   } catch {}
 }
 
+function Install-StartupFallback {
+  param([string]$ClientPs1Path)
+
+  $startupDir = [Environment]::GetFolderPath("Startup")
+  $vbsPath = Join-Path $startupDir "YemekBildirimiClient.vbs"
+
+  $escaped = $ClientPs1Path.Replace('"','""')
+  $vbs = @"
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""$escaped""", 0, False
+"@
+  $vbs | Out-File -FilePath $vbsPath -Encoding ascii -Force
+  Write-Host "[+] Startup fallback installed: $vbsPath"
+}
+
 function Install-ScheduledTaskOrFallback {
   $clientPs1 = Join-Path $InstallDir "client.ps1"
 
@@ -118,10 +133,37 @@ function Install-ScheduledTaskOrFallback {
   $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew
 
   try {
-    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel LeastPrivilege
+    $principal = $null
+
+    # Compatibility: different Windows/PS versions expose different enum names
+    $logonTypes = @("InteractiveToken","Interactive")
+    $runLevels  = @("LeastPrivilege","Limited","Highest")  # CurrentUser install prefers LeastPrivilege/Limited
+
+    $lastErr = $null
+    foreach ($lt in $logonTypes) {
+      foreach ($rl in $runLevels) {
+        try {
+          $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType $lt -RunLevel $rl
+          $lastErr = $null
+          break
+        } catch {
+          $lastErr = $_
+          $principal = $null
+        }
+      }
+      if ($principal) { break }
+    }
+
+    if (-not $principal) {
+      throw "Unable to create ScheduledTaskPrincipal. Last error: $($lastErr.Exception.Message)"
+    }
+
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
     Start-ScheduledTask -TaskName $TaskName
     Write-Host "[+] Scheduled Task installed & started."
+
+    # If task installed OK, remove Startup fallback if exists
+    Remove-StartupFallback
     return
   } catch {
     Write-Warning "ScheduledTask failed: $($_.Exception.Message)"
@@ -129,16 +171,7 @@ function Install-ScheduledTaskOrFallback {
 
   # Fallback: Startup VBS
   try {
-    $startupDir = [Environment]::GetFolderPath("Startup")
-    $vbsPath = Join-Path $startupDir "YemekBildirimiClient.vbs"
-
-    $escaped = $clientPs1.Replace('"','""')
-    $vbs = @"
-Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""$escaped""", 0, False
-"@
-    $vbs | Out-File -FilePath $vbsPath -Encoding ascii -Force
-    Write-Host "[+] Startup fallback installed: $vbsPath"
+    Install-StartupFallback -ClientPs1Path $clientPs1
   } catch {
     throw "Both ScheduledTask and Startup fallback failed: $($_.Exception.Message)"
   }
