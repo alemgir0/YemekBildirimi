@@ -29,7 +29,8 @@ function Try-StopExistingTask {
       try { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue } catch {}
       Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     }
-  } catch {
+  }
+  catch {
     Write-Warning "ScheduledTask cleanup failed: $($_.Exception.Message)"
   }
 }
@@ -37,16 +38,17 @@ function Try-StopExistingTask {
 function Try-StopRunningClient {
   try {
     $procs = Get-CimInstance Win32_Process |
-      Where-Object {
-        $_.Name -ieq "powershell.exe" -and $_.CommandLine -and
-        ($_.CommandLine -like "*client.ps1*" -or $_.CommandLine -like "*YemekBildirimi*")
-      }
+    Where-Object {
+      $_.Name -ieq "powershell.exe" -and $_.CommandLine -and
+      ($_.CommandLine -like "*client.ps1*" -or $_.CommandLine -like "*YemekBildirimi*")
+    }
 
     foreach ($p in $procs) {
       Write-Host "[*] Stopping running client PID=$($p.ProcessId)"
       Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
     }
-  } catch {
+  }
+  catch {
     Write-Warning "Process stop failed: $($_.Exception.Message)"
   }
 }
@@ -75,6 +77,17 @@ function Copy-ClientFiles {
   if (-not (Test-Path -LiteralPath $clientPs1)) {
     throw "CRITICAL: client.ps1 not found after copy."
   }
+
+  # Ensure assets/logo.png copied (needed for toast AppLogo)
+  $srcLogo = Join-Path $SourcePath "assets\logo.png"
+  if (Test-Path -LiteralPath $srcLogo) {
+    $dstAssets = Join-Path $InstallDir "assets"
+    $dstLogo = Join-Path $dstAssets "logo.png"
+    if (-not (Test-Path -LiteralPath $dstAssets)) {
+      New-Item -Path $dstAssets -ItemType Directory -Force | Out-Null
+    }
+    Copy-Item -LiteralPath $srcLogo -Destination $dstLogo -Force
+  }
 }
 
 function Write-Config {
@@ -96,7 +109,8 @@ function Ensure-BurntToast {
     if (-not (Get-Module -ListAvailable -Name BurntToast)) {
       Install-Module -Name BurntToast -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck
     }
-  } catch {
+  }
+  catch {
     Write-Warning "BurntToast install skipped: $($_.Exception.Message)"
   }
 }
@@ -106,7 +120,8 @@ function Remove-StartupFallback {
     $startupDir = [Environment]::GetFolderPath("Startup")
     $vbsPath = Join-Path $startupDir "YemekBildirimiClient.vbs"
     if (Test-Path $vbsPath) { Remove-Item $vbsPath -Force }
-  } catch {}
+  }
+  catch {}
 }
 
 function Install-StartupFallback {
@@ -115,7 +130,7 @@ function Install-StartupFallback {
   $startupDir = [Environment]::GetFolderPath("Startup")
   $vbsPath = Join-Path $startupDir "YemekBildirimiClient.vbs"
 
-  $escaped = $ClientPs1Path.Replace('"','""')
+  $escaped = $ClientPs1Path.Replace('"', '""')
   $vbs = @"
 Set WshShell = CreateObject("WScript.Shell")
 WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""$escaped""", 0, False
@@ -136,8 +151,8 @@ function Install-ScheduledTaskOrFallback {
     $principal = $null
 
     # Compatibility: different Windows/PS versions expose different enum names
-    $logonTypes = @("InteractiveToken","Interactive")
-    $runLevels  = @("LeastPrivilege","Limited","Highest")  # CurrentUser install prefers LeastPrivilege/Limited
+    $logonTypes = @("InteractiveToken", "Interactive")
+    $runLevels = @("LeastPrivilege", "Limited", "Highest")  # CurrentUser install prefers LeastPrivilege/Limited
 
     $lastErr = $null
     foreach ($lt in $logonTypes) {
@@ -146,7 +161,8 @@ function Install-ScheduledTaskOrFallback {
           $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType $lt -RunLevel $rl
           $lastErr = $null
           break
-        } catch {
+        }
+        catch {
           $lastErr = $_
           $principal = $null
         }
@@ -165,14 +181,16 @@ function Install-ScheduledTaskOrFallback {
     # If task installed OK, remove Startup fallback if exists
     Remove-StartupFallback
     return
-  } catch {
+  }
+  catch {
     Write-Warning "ScheduledTask failed: $($_.Exception.Message)"
   }
 
   # Fallback: Startup VBS
   try {
     Install-StartupFallback -ClientPs1Path $clientPs1
-  } catch {
+  }
+  catch {
     throw "Both ScheduledTask and Startup fallback failed: $($_.Exception.Message)"
   }
 }
@@ -190,3 +208,4 @@ Install-ScheduledTaskOrFallback
 
 Write-Host "[+] Done."
 Write-Host "Logs: $(Join-Path $InstallDir 'client.log')"
+
