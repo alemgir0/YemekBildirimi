@@ -1,5 +1,7 @@
 # YemekBildirimi
 
+**Languages:** [English](README.md) | [Türkçe](README_TR.md)
+
 **Windows Toast Notification System** - Instant food service notifications for organizations using FastAPI server + PowerShell client + Docker deployment.
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
